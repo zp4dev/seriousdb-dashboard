@@ -16,7 +16,9 @@ uv sync
 uv run fastapi dev main.py
 ```
 
-The server is available at `http://127.0.0.1:8000`.
+The dashboard is available at `http://127.0.0.1:8000` and the API under `http://127.0.0.1:8000/api`.
+
+Run the API smoke test with `uv run python test_main.py`.
 
 Interactive API documentation is available at:
 
