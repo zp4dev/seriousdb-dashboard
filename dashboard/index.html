@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>seriousdb dashboard</title>
+<script>
+  // Set theme before first paint to avoid a flash
+  let theme = null;
+  try { theme = localStorage.getItem("theme"); } catch {}
+  document.documentElement.dataset.theme = theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+</script>
+<style>
+  :root {
+    --bg: #f6f7f9; --surface: #fff; --fg: #1c1f24; --muted: #6b7280;
+    --border: #dde1e6; --accent: #2563eb; --accent-fg: #fff; --danger: #dc2626;
+  }
+  [data-theme="dark"] {
+    --bg: #111418; --surface: #1a1e24; --fg: #e5e7eb; --muted: #9ca3af;
+    --border: #2d333b; --accent: #3b82f6; --accent-fg: #fff; --danger: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  header h1 { margin: 0; font-size: 16px; }
+  header a { margin-left: auto; color: var(--muted); }
+  button, input { font: inherit; color: inherit; }
+  button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  button.danger { color: var(--danger); }
+  input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); min-width: 0; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 12px 16px 0; border-bottom: 1px solid var(--border); }
+  nav button { border-radius: 6px 6px 0 0; border-bottom: none; margin-bottom: -1px; background: transparent; color: var(--muted); }
+  nav button[aria-selected="true"] { background: var(--bg); color: var(--fg); border-color: var(--border); font-weight: 600; }
+  main { padding: 16px; max-width: 960px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .row h2 { margin: 0 auto 0 0; font-size: 18px; }
+  form.row input { flex: 1 1 160px; }
+  .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; word-break: break-word; }
+  th { color: var(--muted); font-weight: 500; }
+  tr:last-child td { border-bottom: none; }
+  td:last-child { white-space: nowrap; text-align: right; }
+  .empty { padding: 24px; text-align: center; color: var(--muted); }
+  #toast { position: fixed; bottom: 16px; right: 16px; padding: 10px 14px; border-radius: 6px; background: var(--danger); color: #fff; }
+</style>
+</head>
+<body>
+<header>
+  <button id="theme" aria-label="Toggle light/dark mode"></button>
+  <h1>seriousdb</h1>
+  <a href="/docs">API docs</a>
+</header>
+
+<nav id="tabs" role="tablist"></nav>
+
+<main>
+  <div id="none" class="empty" hidden>No databases yet. Create one with “+ New database”.</div>
+  <section id="db" hidden>
+    <div class="row">
+      <h2 id="db-name"></h2>
+      <button id="rename">Rename</button>
+      <button id="drop" class="danger">Delete database</button>
+    </div>
+    <form id="entry" class="row">
+      <input id="key" placeholder="Key" required aria-label="Key">
+      <input id="value" placeholder="Value" required aria-label="Value">
+      <button class="primary">Save</button>
+    </form>
+    <div class="row"><input id="filter" type="search" placeholder="Filter keys or values" aria-label="Filter"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="no-rows" class="empty" hidden>No entries.</div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" role="alert" hidden></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let current = null;
+let entries = {};
+
+// Theme toggle
+function showTheme() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  $("theme").textContent = dark ? "☀ Light" : "☾ Dark";
+}
+$("theme").onclick = () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("theme", next); } catch {}
+  showTheme();
+};
+showTheme();
+
+async function api(method, path, params) {
+  const res = await fetch("/api" + path + (params ? "?" + new URLSearchParams(params) : ""), { method });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail = body?.detail;
+    throw new Error(typeof detail === "string" ? detail : detail?.[0]?.msg || res.statusText);
+  }
+  return body;
+}
+
+// Wraps a UI action so errors show up as a toast
+const action = (fn) => async (...args) => {
+  try { await fn(...args); }
+  catch (err) {
+    $("toast").textContent = err.message;
+    $("toast").hidden = false;
+    clearTimeout(action.timer);
+    action.timer = setTimeout(() => ($("toast").hidden = true), 4000);
+  }
+};
+
+async function refresh(name = current) {
+  const dbs = await api("GET", "/dbs");
+  current = dbs.includes(name) ? name : dbs[0] ?? null;
+
+  $("tabs").replaceChildren(...dbs.map((db) => {
+    const tab = document.createElement("button");
+    tab.setAttribute("role", "tab");
+    tab.textContent = db;
+    tab.setAttribute("aria-selected", db === current);
+    tab.onclick = action(() => refresh(db));
+    return tab;
+  }), newTab());
+
+  $("none").hidden = current !== null;
+  $("db").hidden = current === null;
+  if (current === null) return;
+  history.replaceState(null, "", "#" + encodeURIComponent(current));
+  $("db-name").textContent = current;
+  entries = await api("GET", "/dbs/" + encodeURIComponent(current));
+  renderRows();
+}
+
+function newTab() {
+  const tab = document.createElement("button");
+  tab.textContent = "+ New database";
+  tab.onclick = action(async () => {
+    const name = prompt("Database name (letters, digits, _ or -):");
+    if (!name) return;
+    await api("POST", "/dbs/" + encodeURIComponent(name));
+    await refresh(name);
+  });
+  return tab;
+}
+
+function renderRows() {
+  const q = $("filter").value.toLowerCase();
+  const rows = Object.entries(entries)
+    .filter(([k, v]) => (k + "\n" + v).toLowerCase().includes(q))
+    .map(([key, value]) => {
+      const tr = document.createElement("tr");
+      const edit = document.createElement("button");
+      edit.textContent = "Edit";
+      edit.onclick = () => {
+        $("key").value = key;
+        $("value").value = value;
+        $("value").focus();
+      };
+      const del = document.createElement("button");
+      del.textContent = "Delete";
+      del.className = "danger";
+      del.onclick = action(async () => {
+        if (!confirm(`Delete key "${key}"?`)) return;
+        await api("DELETE", "/db", { db: current, key });
+        await refresh();
+      });
+      const cells = [key, value].map((text) => {
+        const td = document.createElement("td");
+        td.textContent = text;
+        return td;
+      });
+      const actions = document.createElement("td");
+      actions.append(edit, " ", del);
+      tr.append(...cells, actions);
+      return tr;
+    });
+  $("rows").replaceChildren(...rows);
+  $("no-rows").hidden = rows.length > 0;
+}
+
+$("filter").oninput = renderRows;
+
+$("entry").onsubmit = action(async (e) => {
+  e.preventDefault();
+  await api("PUT", "/db", { db: current, key: $("key").value, value: $("value").value });
+  $("entry").reset();
+  $("key").focus();
+  await refresh();
+});
+
+$("rename").onclick = action(async () => {
+  const name = prompt("New name:", current);
+  if (!name || name === current) return;
+  await api("PATCH", "/dbs/" + encodeURIComponent(current), { new_name: name });
+  await refresh(name);
+});
+
+$("drop").onclick = action(async () => {
+  if (!confirm(`Delete database "${current}" and all its entries?`)) return;
+  await api("DELETE", "/dbs/" + encodeURIComponent(current));
+  await refresh();
+});
+
+action(() => refresh(decodeURIComponent(location.hash.slice(1))))();
+</script>
+</body>
+</html>

@@ -6,6 +6,7 @@ COPY pyproject.toml uv.lock* ./
 RUN pip install --no-cache-dir .
 
 COPY main.py ./
+COPY dashboard ./dashboard
 
 EXPOSE 8000
 

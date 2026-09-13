@@ -1,10 +1,12 @@
 # API reference
 
-The server exposes a small HTTP API through FastAPI.
+The server exposes a small HTTP API through FastAPI under `/api`. The web dashboard is served at `/`.
 
 Interactive OpenAPI documentation is available at `http://127.0.0.1:8000/docs` while the server is running.
 
-### PUT `/db`
+Every key-value route takes an optional `db` parameter naming the database. It defaults to `default`.
+
+### PUT `/api/db`
 
 Stores or updates a key-value pair.
 
@@ -12,36 +14,24 @@ Parameters:
 
 - `key` - The key to store.
 - `value` - The value associated with the key.
+- `db` - Database name (optional, default `default`).
 
-For example:
+### GET `/api/db`
 
-```text
-key: name
-value: Alice
-```
+Retrieves the value associated with `key`. Returns `404` if the key does not exist.
 
-This stores:
+### DELETE `/api/db`
 
-```python
-{"name": "Alice"}
-```
+Deletes `key`. Returns `404` if the key does not exist.
 
-alongside any existing key-value pairs.
+## Databases
 
-### GET `/db`
+Database names are 1-64 characters: letters, digits, `_` or `-`.
 
-Retrieves the value associated with a key.
-
-For example:
-
-```text
-key: name
-```
-
-returns:
-
-```text
-Alice
-```
-
-If the requested key does not exist, the API returns a `404` response.
+| Method | Route | Description |
+| --- | --- | --- |
+| GET | `/api/dbs` | List database names. |
+| GET | `/api/dbs/{name}` | Return all key-value pairs of a database. |
+| POST | `/api/dbs/{name}` | Create an empty database. `409` if it exists. |
+| PATCH | `/api/dbs/{name}?new_name=...` | Rename a database. `409` if `new_name` exists. |
+| DELETE | `/api/dbs/{name}` | Delete a database and its file. |
